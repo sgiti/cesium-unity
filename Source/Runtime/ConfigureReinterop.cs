@@ -630,6 +630,14 @@ namespace CesiumForUnity
             tile._transform = new double4x4();
             tile._pTile = IntPtr.Zero;
             tile._pTileEllipsoid = IntPtr.Zero;
+            int tileLevel = tile.level;
+
+            CesiumDistanceLodTileExcluder distanceLodExcluder = go.AddComponent<CesiumDistanceLodTileExcluder>();
+            distanceLodExcluder.distanceLodLevels = new CesiumDistanceLodTileExcluder.DistanceLodLevel[]
+            {
+                new CesiumDistanceLodTileExcluder.DistanceLodLevel { cameraDistance = 1000.0, lodLevel = 8 }
+            };
+            distanceLodExcluder.targetCamera = Camera.main;
 
             Cesium3DTileInfo info;
             info.usesAdditiveRefinement = true;

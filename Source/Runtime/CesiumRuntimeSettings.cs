@@ -1,6 +1,6 @@
 using UnityEngine;
 using System;
-
+using System.IO;
 
 #if UNITY_EDITOR
 using UnityEditor;
@@ -162,27 +162,55 @@ namespace CesiumForUnity
             #endif
         }
 
-        [SerializeField]
-        [Tooltip("The number of requests to handle before each prune of old cached results from the database. Must restart Unity to apply changes.")]
-        private int _requestsPerCachePrune = 10000;
+        private const string _diskCacheFolderName = "CesiumDiskCache";
 
         /// <summary>
-        ///  The number of requests to handle before each prune of old cached results from the database.
+        /// The hardcoded disk cache location used by native runtime code.
         /// </summary>
-        public static int requestsPerCachePrune
+        public static string diskCachePath
         {
-            get => instance._requestsPerCachePrune;
+            get => Path.Combine(Application.streamingAssetsPath, _diskCacheFolderName);
         }
 
-        [SerializeField]
-        [Tooltip("The maximum number of items should be kept in the Sqlite database after pruning. Must restart Unity to apply changes.")]
-        private ulong  _maxItems = 4096;
         /// <summary>
-        /// The maximum number of items should be kept in the Sqlite database after pruning.
+        /// Clears the on-disk cache folder and recreates it.
         /// </summary>
+        public static void ClearDiskCache()
+        {
+            string path = diskCachePath;
+
+            try
+            {
+                if (Directory.Exists(path))
+                {
+                    Directory.Delete(path, true);
+                }
+
+                Directory.CreateDirectory(path);
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning($"Failed to clear Cesium disk cache at '{path}': {exception.Message}");
+            }
+        }
+
+
+        [Obsolete("Disk cache pruning is disabled for file-based cache.")]
+        public static int requestsPerCachePrune
+        {
+            get => int.MaxValue;
+        }
+
+        [Obsolete("Disk cache max item count is disabled for file-based cache.")]
         public static ulong maxItems
         {
-            get => instance._maxItems;
+            get => ulong.MaxValue;
+        }
+
+        [ContextMenu("Clear Disk Cache")]
+        private void ClearDiskCacheFromContextMenu()
+        {
+            ClearDiskCache();
         }
     }
 }

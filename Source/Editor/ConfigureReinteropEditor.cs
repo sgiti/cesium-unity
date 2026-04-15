@@ -155,8 +155,8 @@ namespace CesiumForUnity
             tokenWindow.RefreshExistingTokenList();
             tokenWindow.Close();
 
-            int requestsPerCachePrune = CesiumRuntimeSettings.requestsPerCachePrune;
-            ulong maxItems = CesiumRuntimeSettings.maxItems;
+            string diskCachePath = CesiumRuntimeSettings.diskCachePath;
+            Action clearDiskCache = CesiumRuntimeSettings.ClearDiskCache;
 
             Cesium3DTileset[] tilesets = UnityEngine.Object.FindObjectsOfType<Cesium3DTileset>();
             Cesium3DTileset tileset = tilesets[0];

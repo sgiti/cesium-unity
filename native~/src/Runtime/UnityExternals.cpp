@@ -4,12 +4,11 @@
 #include "UnityPrepareRendererResources.h"
 #include "UnityTaskProcessor.h"
 #include "UnityWebRequestAssetAccessor.h"
+#include "DiskCacheAssetAccessor.h"
 
 #include <Cesium3DTilesSelection/Tileset.h>
 #include <CesiumAsync/AsyncSystem.h>
-#include <CesiumAsync/CachingAssetAccessor.h>
 #include <CesiumAsync/GunzipAssetAccessor.h>
-#include <CesiumAsync/SqliteCache.h>
 #include <CesiumUtility/CreditSystem.h>
 
 #include <DotNet/CesiumForUnity/CesiumCreditSystem.h>
@@ -66,13 +65,8 @@ void initializeExternals() {
   CESIUM_ASSERT(pWebRequestAccessor == nullptr);
 
   try {
-    std::string tempPath =
-        UnityEngine::Application::temporaryCachePath().ToStlString();
-    std::string cacheDBPath = tempPath + "/cesium-request-cache.sqlite";
-
-    int32_t requestsPerCachePrune =
-        CesiumForUnity::CesiumRuntimeSettings::requestsPerCachePrune();
-    uint64_t maxItems = CesiumForUnity::CesiumRuntimeSettings::maxItems();
+    std::string cacheRootPath =
+        CesiumForUnity::CesiumRuntimeSettings::diskCachePath().ToStlString();
 
     pWebRequestAccessor =
 #ifdef __EMSCRIPTEN__
@@ -82,14 +76,9 @@ void initializeExternals() {
 #endif
 
     pAccessor = std::make_shared<GunzipAssetAccessor>(
-        std::make_shared<CachingAssetAccessor>(
-            spdlog::default_logger(),
+        std::make_shared<DiskCacheAssetAccessor>(
             pWebRequestAccessor,
-            std::make_shared<SqliteCache>(
-                spdlog::default_logger(),
-                cacheDBPath,
-                maxItems),
-            requestsPerCachePrune));
+            cacheRootPath));
 
     pTaskProcessor = std::make_shared<UnityTaskProcessor>();
     asyncSystem.emplace(pTaskProcessor);

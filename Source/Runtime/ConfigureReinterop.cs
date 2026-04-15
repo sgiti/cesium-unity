@@ -564,8 +564,8 @@ namespace CesiumForUnity
 
             int length = test.Length;
 
-            int requestsPerCachePrune = CesiumRuntimeSettings.requestsPerCachePrune;
-            ulong maxItems = CesiumRuntimeSettings.maxItems;
+            string diskCachePath = CesiumRuntimeSettings.diskCachePath;
+            Action clearDiskCache = CesiumRuntimeSettings.ClearDiskCache;
 
             Cesium3DTilesetLoadFailureDetails tilesetDetails
                 = new Cesium3DTilesetLoadFailureDetails(tileset, Cesium3DTilesetLoadType.Unknown, 0, "");

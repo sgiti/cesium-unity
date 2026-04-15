@@ -37,6 +37,14 @@ DotNet::UnityEngine::Bounds Cesium3DTileImpl::getBounds(
 int32_t Cesium3DTileImpl::getLevel(void* pTileVoid) {
   const Tile* pTile = static_cast<const Tile*>(pTileVoid);
   return static_cast<int32_t>(pTile->getDepth());
+
+  int32_t level = 0;
+  while (pTile->getParent() != nullptr) {
+    ++level;
+    pTile = pTile->getParent();
+  }
+
+  return level;
 }
 
 } // namespace CesiumForUnityNative

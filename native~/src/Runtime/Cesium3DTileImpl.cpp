@@ -34,4 +34,9 @@ DotNet::UnityEngine::Bounds Cesium3DTileImpl::getBounds(
           float(aabb.lengthZ)});
 }
 
+int32_t Cesium3DTileImpl::getLevel(void* pTileVoid) {
+  const Tile* pTile = static_cast<const Tile*>(pTileVoid);
+  return static_cast<int32_t>(pTile->getDepth());
+}
+
 } // namespace CesiumForUnityNative

@@ -32,6 +32,12 @@ namespace CesiumForUnity
             }
         }
 
+        /// <summary>
+        /// Gets the traversal depth of this tile in the tileset hierarchy.
+        /// </summary>
+        public int level => Cesium3DTile.getLevel(this._pTile);
+
         private static partial Bounds getBounds(IntPtr pTile, IntPtr pTileEllipsoid, double4x4 ecefToLocalMatrix);
+        private static partial int getLevel(IntPtr pTile);
     }
 }

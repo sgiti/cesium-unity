@@ -4,7 +4,9 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstdint>
+#include <string_view>
 
 namespace CesiumForUnityNative {
 
@@ -103,6 +105,113 @@ std::string toHex(uint64_t value) {
   return result;
 }
 
+std::string toLowerAscii(std::string value) {
+  std::transform(
+      value.begin(),
+      value.end(),
+      value.begin(),
+      [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return value;
+}
+
+bool isCredentialParameterName(const std::string& name) {
+  const std::string lower = toLowerAscii(name);
+  return lower == "session" || lower == "key" || lower == "token" ||
+         lower == "access_token" || lower == "api_key" ||
+         lower == "x-goog-api-key";
+}
+
+std::string getBaseUrl(const std::string& url) {
+  const size_t queryStart = url.find('?');
+  if (queryStart == std::string::npos) {
+    return url;
+  }
+
+  return url.substr(0, queryStart);
+}
+
+std::vector<std::pair<std::string, std::string>>
+parseQueryParameters(const std::string& url) {
+  std::vector<std::pair<std::string, std::string>> result;
+
+  const size_t queryStart = url.find('?');
+  if (queryStart == std::string::npos || queryStart + 1 >= url.size()) {
+    return result;
+  }
+
+  const std::string_view query(url.data() + queryStart + 1, url.size() - queryStart - 1);
+  size_t segmentStart = 0;
+  while (segmentStart < query.size()) {
+    size_t segmentEnd = query.find('&', segmentStart);
+    if (segmentEnd == std::string_view::npos) {
+      segmentEnd = query.size();
+    }
+
+    std::string_view segment = query.substr(segmentStart, segmentEnd - segmentStart);
+    if (!segment.empty()) {
+      size_t equals = segment.find('=');
+      if (equals == std::string_view::npos) {
+        result.emplace_back(std::string(segment), std::string());
+      } else {
+        result.emplace_back(
+            std::string(segment.substr(0, equals)),
+            std::string(segment.substr(equals + 1)));
+      }
+    }
+
+    segmentStart = segmentEnd + 1;
+  }
+
+  return result;
+}
+
+std::string buildUrlWithQuery(
+    const std::string& baseUrl,
+    const std::vector<std::pair<std::string, std::string>>& parameters) {
+  if (parameters.empty()) {
+    return baseUrl;
+  }
+
+  std::string result = baseUrl;
+  result.push_back('?');
+  for (size_t i = 0; i < parameters.size(); ++i) {
+    if (i > 0) {
+      result.push_back('&');
+    }
+    result += parameters[i].first;
+    if (!parameters[i].second.empty()) {
+      result.push_back('=');
+      result += parameters[i].second;
+    }
+  }
+
+  return result;
+}
+
+std::string normalizeUrlForCaching(const std::string& url) {
+  std::vector<std::pair<std::string, std::string>> query =
+      parseQueryParameters(url);
+
+  query.erase(
+      std::remove_if(
+          query.begin(),
+          query.end(),
+          [](const auto& entry) { return isCredentialParameterName(entry.first); }),
+      query.end());
+
+  std::sort(
+      query.begin(),
+      query.end(),
+      [](const auto& lhs, const auto& rhs) {
+        if (lhs.first == rhs.first) {
+          return lhs.second < rhs.second;
+        }
+        return lhs.first < rhs.first;
+      });
+
+  return buildUrlWithQuery(getBaseUrl(url), query);
+}
+
 } // namespace
 
 DiskCacheAssetAccessor::DiskCacheAssetAccessor(
@@ -133,7 +242,8 @@ DiskCacheAssetAccessor::request(
         ->request(asyncSystem, verb, url, headers, contentPayload);
   }
 
-  const std::string key = computeCacheKey(verb, url, headers);
+  const std::string normalizedUrl = normalizeUrlForCaching(url);
+  const std::string key = computeCacheKey(verb, normalizedUrl, headers);
   std::shared_ptr<CesiumAsync::IAssetRequest> pCachedRequest;
   if (this->tryLoadCached(verb, url, headers, key, pCachedRequest)) {
     return asyncSystem.createResolvedFuture(std::move(pCachedRequest));

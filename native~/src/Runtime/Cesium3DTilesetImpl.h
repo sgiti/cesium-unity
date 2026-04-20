@@ -11,7 +11,10 @@
 #include <DotNet/System/Array1.h>
 #include <DotNet/System/Threading/Tasks/Task1.h>
 
+#include <cstdint>
 #include <memory>
+#include <string>
+#include <unordered_map>
 
 #if UNITY_EDITOR
 #include <DotNet/UnityEditor/CallbackFunction.h>
@@ -94,6 +97,23 @@ private:
   void updateLastViewUpdateResultState(
       const DotNet::CesiumForUnity::Cesium3DTileset& tileset,
       const Cesium3DTilesSelection::ViewUpdateResult& currentResult);
+  void recordTilesetLoadFailureDebug(
+      const DotNet::CesiumForUnity::Cesium3DTileset& tileset,
+      int typeValue,
+      uint16_t statusCode,
+      const std::string& message);
+  void logStreamingStallDebug(
+      const DotNet::CesiumForUnity::Cesium3DTileset& tileset,
+      const Cesium3DTilesSelection::ViewUpdateResult& currentResult);
+
+  struct LoadFailureDebugState {
+    uint64_t totalFailures = 0;
+    uint64_t googleSession400Failures = 0;
+    uint64_t consecutiveFramesWithNoRenderedTiles = 0;
+    uint64_t lastStallLogFrame = 0;
+    std::unordered_map<uint16_t, uint64_t> failuresByStatusCode;
+    std::string lastFailureMessage;
+  };
 
   std::unique_ptr<Cesium3DTilesSelection::Tileset> _pTileset;
   Cesium3DTilesSelection::ViewUpdateResult _lastUpdateResult;
@@ -103,7 +123,9 @@ private:
   DotNet::CesiumForUnity::CesiumCreditSystem _creditSystem;
   DotNet::CesiumForUnity::CesiumCameraManager _cameraManager;
   bool _destroyTilesetOnNextUpdate;
+  bool _destroyAndReloadTilesetOnNextUpdate;
   int32_t _lastOpaqueMaterialHash;
+  LoadFailureDebugState _loadFailureDebugState;
 };
 
 } // namespace CesiumForUnityNative

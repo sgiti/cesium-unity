@@ -45,6 +45,7 @@
 #include <DotNet/UnityEngine/Transform.h>
 #include <DotNet/UnityEngine/Vector3.h>
 
+#include <algorithm>
 #include <variant>
 
 #if UNITY_EDITOR
@@ -53,6 +54,8 @@
 #include <DotNet/UnityEditor/EditorUtility.h>
 #include <DotNet/UnityEditor/SceneView.h>
 #endif
+
+#include <chrono>
 
 using namespace Cesium3DTilesSelection;
 using namespace DotNet;
@@ -69,6 +72,7 @@ Cesium3DTilesetImpl::Cesium3DTilesetImpl(
       _creditSystem(nullptr),
       _cameraManager(nullptr),
       _destroyTilesetOnNextUpdate(false),
+      _destroyAndReloadTilesetOnNextUpdate(false),
       _lastOpaqueMaterialHash(0) {
 }
 
@@ -113,6 +117,22 @@ void Cesium3DTilesetImpl::UpdateInternal(
     this->DestroyTileset(tileset);
   }
 
+  if (this->_destroyAndReloadTilesetOnNextUpdate) {
+    if (this->_pTileset) {
+      SPDLOG_LOGGER_WARN(
+          this->_pTileset->getExternals().pLogger,
+          "{0}: Reloading tileset after tile.googleapis.com 400 failure to "
+          "refresh session/key parameters.",
+          tileset.gameObject().name().ToStlString());
+    }
+    this->DestroyTileset(tileset);
+    this->LoadTileset(tileset);
+    this->_destroyAndReloadTilesetOnNextUpdate = false;
+    if (!this->_pTileset) {
+      return;
+    }
+  }
+
 #if UNITY_EDITOR
   if (UnityEngine::Application::isEditor() &&
       !UnityEditor::EditorApplication::isPlaying()) {
@@ -145,17 +165,31 @@ void Cesium3DTilesetImpl::UpdateInternal(
       return;
   }
 
+  //using Clock = std::chrono::steady_clock; // DEBUG
+
+  //auto t0 = Clock::now(); // DEBUG
   getAsyncSystem().dispatchMainThreadTasks();
+  //auto t1 = Clock::now(); // DEBUG
+
   std::vector<ViewState> viewStates =
       CameraManager::getAllCameras(tileset, *this);
+
+  //auto t2 = Clock::now(); // DEBUG
+
 
   const ViewUpdateResult& updateResult = this->_pTileset->updateViewGroup(
       this->_pTileset->getDefaultViewGroup(),
       viewStates,
       DotNet::UnityEngine::Time::deltaTime());
+
+  //auto t3 = Clock::now(); // DEBUG
   this->_pTileset->loadTiles();
 
+  //auto t4 = Clock::now(); // DEBUG
+
   this->updateLastViewUpdateResultState(tileset, updateResult);
+  this->logStreamingStallDebug(tileset, updateResult);
+
 
   for (auto pTile : updateResult.tilesFadingOut) {
     if (pTile->getState() != TileLoadState::Done) {
@@ -175,6 +209,8 @@ void Cesium3DTilesetImpl::UpdateInternal(
     }
   }
 
+  //auto t5 = Clock::now(); // DEBUG
+
   for (auto pTile : updateResult.tilesToRenderThisFrame) {
     if (pTile->getState() != TileLoadState::Done) {
       continue;
@@ -192,6 +228,29 @@ void Cesium3DTilesetImpl::UpdateInternal(
       }
     }
   }
+
+  //auto t6 = Clock::now(); // DEBUG
+
+  //auto msDispatch = std::chrono::duration<double, std::milli>(t1 - t0).count();
+  //auto msUpdateVG = std::chrono::duration<double, std::milli>(t3 - t2).count();
+  //auto msLoadTiles = std::chrono::duration<double, std::milli>(t4 - t3).count();
+  //auto ms5 = std::chrono::duration<double, std::milli>(t5 - t4).count();
+  //auto ms6 = std::chrono::duration<double, std::milli>(t6 - t5).count();
+  /*
+  if (1) {
+    SPDLOG_LOGGER_INFO(
+        this->_pTileset->getExternals().pLogger,
+        "{} frame {} | dispatchMainThreadTasks: {:.2f} ms | updateViewGroup: "
+        "{:.2f} ms | loadTiles: {:.2f} ms | m5: {:.2f} ms | m6: {:.2f} ms",
+        tileset.gameObject().name().ToStlString(),
+        updateResult.frameNumber,
+        msDispatch,
+        msUpdateVG,
+        msLoadTiles,
+        ms5,
+        ms6);
+  }
+  */
 }
 
 void Cesium3DTilesetImpl::OnValidate(
@@ -239,6 +298,7 @@ void Cesium3DTilesetImpl::OnDisable(
 
   this->_creditSystem = nullptr;
   this->_cameraManager = nullptr;
+  this->_destroyAndReloadTilesetOnNextUpdate = false;
 
   this->DestroyTileset(tileset);
 }
@@ -564,6 +624,86 @@ void Cesium3DTilesetImpl::updateLastViewUpdateResultState(
 
   this->_lastUpdateResult = currentResult;
 }
+void Cesium3DTilesetImpl::recordTilesetLoadFailureDebug(
+    const DotNet::CesiumForUnity::Cesium3DTileset& tileset,
+    int typeValue,
+    uint16_t statusCode,
+    const std::string& message) {
+  LoadFailureDebugState& state = this->_loadFailureDebugState;
+  ++state.totalFailures;
+  ++state.failuresByStatusCode[statusCode];
+  state.lastFailureMessage = message;
+
+  if (statusCode == 400 &&
+      message.find("tile.googleapis.com") != std::string::npos &&
+      message.find("session=") != std::string::npos) {
+    ++state.googleSession400Failures;
+    this->_destroyAndReloadTilesetOnNextUpdate = true;
+  }
+
+  if (!this->_pTileset) {
+    return;
+  }
+
+  if (state.totalFailures <= 3 ||
+      (state.totalFailures & (state.totalFailures - 1)) == 0) {
+    SPDLOG_LOGGER_WARN(
+        this->_pTileset->getExternals().pLogger,
+        "{0}: Tile load failure tracked. Total failures={1}, status={2} "
+        "status-count={3}, type={4}, google-session-400={5}, message={6}",
+        tileset.gameObject().name().ToStlString(),
+        state.totalFailures,
+        statusCode,
+        state.failuresByStatusCode[statusCode],
+        typeValue,
+        state.googleSession400Failures,
+        message);
+  }
+}
+
+void Cesium3DTilesetImpl::logStreamingStallDebug(
+    const DotNet::CesiumForUnity::Cesium3DTileset& tileset,
+    const Cesium3DTilesSelection::ViewUpdateResult& currentResult) {
+  LoadFailureDebugState& state = this->_loadFailureDebugState;
+
+  if (currentResult.tilesToRenderThisFrame.empty()) {
+    ++state.consecutiveFramesWithNoRenderedTiles;
+  } else {
+    state.consecutiveFramesWithNoRenderedTiles = 0;
+    return;
+  }
+
+  constexpr uint64_t stallFrameThreshold = 120;
+  if (state.consecutiveFramesWithNoRenderedTiles < stallFrameThreshold) {
+    return;
+  }
+
+  if (currentResult.frameNumber - state.lastStallLogFrame <
+      stallFrameThreshold) {
+    return;
+  }
+
+  state.lastStallLogFrame = currentResult.frameNumber;
+
+  if (!this->_pTileset) {
+    return;
+  }
+
+  SPDLOG_LOGGER_WARN(
+      this->_pTileset->getExternals().pLogger,
+      "{0}: No tiles rendered for {1} consecutive frames (current frame {2}). "
+      "Queues worker={3}, main={4}, loaded={5}, total-failures={6}, "
+      "google-session-400={7}, last-failure='{8}'.",
+      tileset.gameObject().name().ToStlString(),
+      state.consecutiveFramesWithNoRenderedTiles,
+      currentResult.frameNumber,
+      currentResult.workerThreadTileLoadQueueLength,
+      currentResult.mainThreadTileLoadQueueLength,
+      this->_pTileset->getNumberOfTilesLoaded(),
+      state.totalFailures,
+      state.googleSession400Failures,
+      state.lastFailureMessage);
+}
 
 void Cesium3DTilesetImpl::DestroyTileset(
     const DotNet::CesiumForUnity::Cesium3DTileset& tileset) {
@@ -582,9 +722,32 @@ void Cesium3DTilesetImpl::DestroyTileset(
 
 void Cesium3DTilesetImpl::LoadTileset(
     const DotNet::CesiumForUnity::Cesium3DTileset& tileset) {
+  this->_loadFailureDebugState = LoadFailureDebugState();
+
   TilesetOptions options{};
   options.rendererOptions = std::make_any<CreateModelOptions>(tileset);
   options.maximumScreenSpaceError = tileset.maximumScreenSpaceError();
+  System::Array1<double> distanceBandThresholds =
+      tileset.distanceBandThresholds();
+  if (distanceBandThresholds != nullptr &&
+      distanceBandThresholds.Length() >= 3) {
+    options.distanceBandThresholds = {
+        distanceBandThresholds[0],
+        distanceBandThresholds[1],
+        distanceBandThresholds[2]};
+  }
+  System::Array1<int32_t> fixedLodDepthsByDistanceBand =
+      tileset.fixedLodDepthsByDistanceBand();
+  if (fixedLodDepthsByDistanceBand != nullptr &&
+      fixedLodDepthsByDistanceBand.Length() >= 4) {
+    options.fixedLodDepthsByDistanceBand = {
+        static_cast<uint32_t>(std::max(0, fixedLodDepthsByDistanceBand[0])),
+        static_cast<uint32_t>(std::max(0, fixedLodDepthsByDistanceBand[1])),
+        static_cast<uint32_t>(std::max(0, fixedLodDepthsByDistanceBand[2])),
+        static_cast<uint32_t>(std::max(0, fixedLodDepthsByDistanceBand[3]))};
+  }
+  options.enableDistanceBasedLod = tileset.enableDistanceBasedLod();
+
   options.preloadAncestors = tileset.preloadAncestors();
   options.preloadSiblings = tileset.preloadSiblings();
   options.forbidHoles = tileset.forbidHoles();
@@ -600,8 +763,14 @@ void Cesium3DTilesetImpl::LoadTileset(
   // options.lodTransitionLength = tileset.lodTransitionLength();
   options.showCreditsOnScreen = tileset.showCreditsOnScreen();
   options.loadErrorCallback =
-      [tileset](const TilesetLoadFailureDetails& details) {
+      [this, tileset](const TilesetLoadFailureDetails& details) {
         int typeValue = (int)details.type;
+        this->recordTilesetLoadFailureDebug(
+            tileset,
+            typeValue,
+            details.statusCode,
+            details.message);
+
         CesiumForUnity::Cesium3DTilesetLoadFailureDetails unityDetails(
             tileset,
             CesiumForUnity::Cesium3DTilesetLoadType(typeValue),
